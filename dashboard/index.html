@@ -3,206 +3,363 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
     <title>ESP32 Sensor Monitor</title>
-
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f4f6f8;
-            margin: 0;
-            padding: 30px;
-            color: #222;
-        }
+        :root { --bg:#f4f6f8; --card:#fff; --text:#222; --muted:#666; --line:#e6e9ec; }
+        * { box-sizing:border-box; }
+        body { font-family:Arial,Helvetica,sans-serif; background:var(--bg); margin:0; padding:30px; color:var(--text); }
+        .logo-container img { max-height:60px; margin-bottom:10px; }
+        h1 { margin:0 0 4px; }
+        .subtitle { color:var(--muted); margin-bottom:20px; font-size:14px; }
 
-        h1 {
-            margin-bottom: 5px;
-        }
+        .toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:20px; }
+        .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+        .seg button { border:0; border-radius:0; background:var(--card); }
+        .seg button.active { background:#333; color:#fff; }
+        .ctl { display:inline-flex; align-items:center; gap:6px; }
+        .ctl label { color:var(--muted); font-size:14px; }
+        select, button { font-size:14px; padding:7px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--text); cursor:pointer; }
+        button:hover { background:#f0f2f4; }
+        .seg button:hover { background:#eee; }
+        .seg button.active:hover { background:#333; }
+        #status { color:var(--muted); font-size:13px; margin-left:auto; }
+        #status.error { color:#c0392b; }
 
-        .subtitle {
-            color: #666;
-            margin-bottom: 30px;
-        }
+        .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:15px; margin-bottom:30px; }
+        .card { background:var(--card); padding:18px; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,.08); }
+        .card-name { color:var(--muted); font-size:14px; }
+        .card-value { font-size:26px; font-weight:bold; margin-top:6px; }
+        .card-unit { font-size:15px; font-weight:normal; color:var(--muted); }
 
-        .cards {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
-        }
+        .charts { display:grid; grid-template-columns:repeat(auto-fit,minmax(360px,1fr)); gap:20px; }
+        .chart-container { background:var(--card); padding:16px 18px 20px; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,.08); height:300px; }
+        .chart-title { font-size:14px; color:var(--muted); margin-bottom:8px; }
+        .chart-canvas-wrap { position:relative; height:240px; }
 
-        .card {
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        }
-
-        .card-name {
-            color: #666;
-            font-size: 14px;
-        }
-
-        .card-value {
-            font-size: 28px;
-            font-weight: bold;
-            margin-top: 8px;
-        }
-
-        .chart-container {
-            background: white;
-            padding: 20px;
-            margin-bottom: 25px;
-            border-radius: 10px;
-            height: 350px;
-        }
+        .empty { background:var(--card); border:1px dashed var(--line); border-radius:10px; padding:24px; color:var(--muted); line-height:1.5; }
+        code { background:#eef1f3; padding:1px 5px; border-radius:4px; }
     </style>
 </head>
-
 <body>
-    
-<!-- Project Logo Banner -->
+
 <div class="logo-container">
-    <img src="logo.jpg" alt="Sulphide Shadows Logo">
+    <img src="logo.jpg" alt="Sulphide Shadows Logo" onerror="this.style.display='none'">
 </div>
 
 <h1>ESP32 Sensor Monitor</h1>
+<div class="subtitle" id="deviceLine">Device: —</div>
 
-<div class="subtitle">
-    Device: ESP32-01
+<div class="toolbar">
+    <div class="seg" id="viewSeg">
+        <button data-view="recent" class="active">Per-file avg</button>
+        <button data-view="daily">Daily avg</button>
+    </div>
+
+    <div class="ctl" id="recentCtl">
+        <label for="count">last</label>
+        <select id="count">
+            <option value="10" selected>10 files</option>
+            <option value="25">25 files</option>
+            <option value="50">50 files</option>
+        </select>
+    </div>
+
+    <div class="ctl" id="dailyCtl" style="display:none">
+        <label for="days">last</label>
+        <select id="days">
+            <option value="7">7 days</option>
+            <option value="14" selected>14 days</option>
+            <option value="30">30 days</option>
+        </select>
+    </div>
+
+    <button id="refresh">Refresh</button>
+    <span id="status">Loading…</span>
 </div>
 
-<div class="cards">
-
-    <div class="card">
-        <div class="card-name">pH</div>
-        <div class="card-value" id="ph">--</div>
-    </div>
-
-    <div class="card">
-        <div class="card-name">H₂S</div>
-        <div class="card-value" id="h2s">--</div>
-    </div>
-
-    <div class="card">
-        <div class="card-name">Methane</div>
-        <div class="card-value" id="methane">--</div>
-    </div>
-
-    <div class="card">
-        <div class="card-name">Temperature</div>
-        <div class="card-value" id="temperature">--</div>
-    </div>
-
-    <div class="card">
-        <div class="card-name">Humidity</div>
-        <div class="card-value" id="humidity">--</div>
-    </div>
-
-    <div class="card">
-        <div class="card-name">CO₂</div>
-        <div class="card-value" id="co2">--</div>
-    </div>
-
-    <div class="card">
-        <div class="card-name">Dissolved Oxygen</div>
-        <div class="card-value" id="oxygen">--</div>
-    </div>
-
-</div>
-
-<div class="chart-container">
-    <canvas id="sensorChart"></canvas>
-</div>
+<div class="cards" id="cards"></div>
+<div class="charts" id="charts"></div>
 
 <script>
+// ============================ CONFIG ====================================
+// The folder of JSON files, RELATIVE TO THIS PAGE (used to fetch file bodies).
+const REL_DIR = "../data/";
 
-async function loadData() {
+// GitHub repo details, used ONLY to list filenames (GitHub Pages can't list a
+// folder by itself). Leave owner/repo blank to auto-detect from the page URL;
+// fill them in if the guess is wrong. Public repo => no token needed.
+const GH = {
+    owner: "",          // e.g. "mattgaber"      ("" = auto-detect)
+    repo: "",           // e.g. "sulphide-shadows" ("" = auto-detect)
+    branch: "main",     // branch your data lives on
+    dataPath: "data",   // path to the data folder INSIDE the repo (repo-root relative)
+};
 
-    const response = await fetch(
-        "../data/2026-09-27.json"
-    );
+const REFRESH_MS = 5 * 60 * 1000;   // auto-refresh every 5 min
+const MAX_FILES  = 600;             // safety cap on how many files to fetch at once
 
-    const data = await response.json();
+// Metric definitions: JSON key, label, unit, colour.
+const METRICS = [
+    { key:"ph",                    label:"pH",               unit:"",     color:"#6366f1" },
+    { key:"h2s_ppm",               label:"H₂S",              unit:"ppm",  color:"#f59e0b" },
+    { key:"methane_ppm",           label:"Methane",          unit:"ppm",  color:"#ef4444" },
+    { key:"temperature_c",         label:"Temperature",      unit:"°C",   color:"#f97316" },
+    { key:"humidity_percent",      label:"Humidity",         unit:"%",    color:"#0ea5e9" },
+    { key:"co2_ppm",               label:"CO₂",              unit:"ppm",  color:"#10b981" },
+    { key:"dissolved_oxygen_mg_l", label:"Dissolved Oxygen", unit:"mg/L", color:"#14b8a6" },
+];
 
-    const readings = data.readings;
+// ============================ STATE =====================================
+let ALL_NAMES = [];                 // every .json filename, sorted chronologically
+const CACHE = new Map();            // filename -> normalized readings[] (avoids refetch)
+let CHARTS = [];                    // live Chart.js instances
+let VIEW = "recent";                // "recent" | "daily"
 
-    // Latest reading
-    const latest = readings[readings.length - 1];
-
-    document.getElementById("ph").textContent =
-        latest.ph;
-
-    document.getElementById("h2s").textContent =
-        latest.h2s_ppm + " ppm";
-
-    document.getElementById("methane").textContent =
-        latest.methane_ppm + " ppm";
-
-    document.getElementById("temperature").textContent =
-        latest.temperature_c + " °C";
-
-    document.getElementById("humidity").textContent =
-        latest.humidity_percent + " %";
-
-    document.getElementById("co2").textContent =
-        latest.co2_ppm + " ppm";
-
-    document.getElementById("oxygen").textContent =
-        latest.dissolved_oxygen_mg_l + " mg/L";
-
-
-    // Chart labels
-    const labels = readings.map(
-        reading => new Date(reading.timestamp)
-            .toLocaleTimeString()
-    );
-
-
-    // Temperature chart
-    new Chart(
-        document.getElementById("sensorChart"),
-        {
-            type: "line",
-
-            data: {
-                labels: labels,
-
-                datasets: [
-                    {
-                        label: "Temperature °C",
-
-                        data: readings.map(
-                            reading => reading.temperature_c
-                        ),
-
-                        borderWidth: 2,
-
-                        tension: 0.3
-                    }
-                ]
-            },
-
-            options: {
-                responsive: true,
-
-                maintainAspectRatio: false,
-
-                scales: {
-                    y: {
-                        beginAtZero: false
-                    }
-                }
-            }
-        }
-    );
+// ==================== FILE DISCOVERY (list filenames) ===================
+function resolveRepo() {
+    let { owner, repo, branch, dataPath } = GH;
+    const host = location.hostname;               // e.g. mattgaber.github.io
+    const segs = location.pathname.split("/").filter(Boolean);
+    if (!owner && host.endsWith(".github.io")) owner = host.split(".")[0];
+    if (!repo) {
+        // Project page => /{repo}/...  ; user page => repo is "{owner}.github.io"
+        repo = (host.endsWith(".github.io") && segs.length) ? segs[0]
+             : (owner ? owner + ".github.io" : "");
+    }
+    return { owner, repo, branch, dataPath };
 }
 
-loadData();
+async function listFiles() {
+    const { owner, repo, branch, dataPath } = resolveRepo();
 
+    // 1) GitHub Contents API (works for public repos, no auth)
+    if (owner && repo) {
+        try {
+            const url = `https://api.github.com/repos/${owner}/${repo}/contents/${dataPath}?ref=${branch}`;
+            const r = await fetch(url, { headers: { "Accept": "application/vnd.github+json" }, cache: "no-store" });
+            if (r.ok) {
+                const arr = await r.json();
+                if (Array.isArray(arr)) return cleanNames(arr.filter(x => x.type === "file").map(x => x.name));
+            } else if (r.status === 403) {
+                console.warn("GitHub API rate-limited; trying index.json fallback.");
+            }
+        } catch (e) { console.warn("GitHub API list failed:", e.message); }
+    }
+
+    // 2) Manifest fallback: ../data/index.json = ["a.json", ...] or {files:[...]}
+    try {
+        const r = await fetch(REL_DIR + "index.json", { cache: "no-store" });
+        if (r.ok) {
+            const j = await r.json();
+            const list = Array.isArray(j) ? j : (Array.isArray(j.files) ? j.files : null);
+            if (list) return cleanNames(list);
+        }
+    } catch (e) { /* ignore */ }
+
+    throw new Error("Couldn't list the data folder via the GitHub API. Set GH.owner / GH.repo in the file, or add an index.json.");
+}
+
+function basename(p) {
+    try { p = decodeURIComponent(p); } catch (e) {}
+    p = p.split("?")[0].split("#")[0];
+    const parts = p.split("/").filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : p;
+}
+function cleanNames(list) {
+    return list.map(basename)
+        .filter(n => n.toLowerCase().endsWith(".json") && n.toLowerCase() !== "index.json")
+        .filter((n, i, a) => a.indexOf(n) === i)
+        .sort();                                  // ISO-date names sort chronologically
+}
+
+// ==================== FETCH + NORMALISE ONE FILE ========================
+// Handles both shapes: { readings:[...] } (test) and { timestamp, ... } (esp32).
+function normalize(obj) {
+    if (obj && Array.isArray(obj.readings)) return obj.readings;
+    if (obj && obj.timestamp) return [obj];
+    return [];
+}
+async function getReadings(name) {
+    if (CACHE.has(name)) return CACHE.get(name);
+    let readings = [];
+    try {
+        const r = await fetch(REL_DIR + name, { cache: "no-store" });
+        if (r.ok) readings = normalize(await r.json()).filter(x => x && x.timestamp);
+    } catch (e) { /* leave empty */ }
+    CACHE.set(name, readings);
+    return readings;
+}
+
+// ==================== AVERAGING HELPERS =================================
+function mean(nums) {
+    const v = nums.filter(n => typeof n === "number" && !isNaN(n));
+    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+}
+function avgReadings(readings) {
+    const out = {};
+    for (const m of METRICS) out[m.key] = mean(readings.map(r => r[m.key]));
+    const ts = readings.map(r => +new Date(r.timestamp)).filter(n => !isNaN(n));
+    out._t = ts.length ? new Date(ts.reduce((a, b) => a + b, 0) / ts.length) : null;
+    return out;
+}
+function localDayKey(ts) {
+    const d = new Date(ts);
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function fileDate(name) {
+    const m = name.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+}
+
+// ==================== BUILD SERIES PER VIEW =============================
+// Recent: last N files -> ONE averaged point per file.
+async function buildRecent(n) {
+    const names = ALL_NAMES.slice(-Math.min(n, MAX_FILES));
+    const rows = [];
+    await Promise.all(names.map(async name => {
+        const rs = await getReadings(name);
+        if (rs.length) { const a = avgReadings(rs); a._name = name; rows.push(a); }
+    }));
+    rows.sort((a, b) => (a._t || 0) - (b._t || 0));
+    const labels = rows.map(a => a._t
+        ? a._t.toLocaleString([], { month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" })
+        : a._name);
+    return { labels, rows, count: names.length };
+}
+
+// Daily: all files within the window -> group every reading by LOCAL day -> average.
+async function buildDaily(days) {
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days);
+    // Prefilter by filename date (+1 day margin for UTC/local drift); keep undated files.
+    const margin = new Date(cutoff); margin.setDate(margin.getDate() - 1);
+    let names = ALL_NAMES.filter(name => { const d = fileDate(name); return !d || d >= margin; });
+    if (names.length > MAX_FILES) names = names.slice(-MAX_FILES);
+
+    let all = [];
+    await Promise.all(names.map(async name => { all = all.concat(await getReadings(name)); }));
+
+    const byDay = {};
+    for (const r of all) { const k = localDayKey(r.timestamp); (byDay[k] = byDay[k] || []).push(r); }
+    const keys = Object.keys(byDay).sort().slice(-days);   // last `days` local days present
+    const rows = keys.map(k => { const a = avgReadings(byDay[k]); a._day = k; a._nDay = byDay[k].length; return a; });
+    const labels = keys.map(k => { const [y,mo,d] = k.split("-"); return mo + "-" + d; });
+    return { labels, rows, count: names.length, totalReadings: all.length };
+}
+
+// ==================== RENDER ============================================
+async function updateCards() {
+    // Latest RAW reading = newest reading from the most recent file (a live snapshot).
+    let latest = null, device = null;
+    for (let i = ALL_NAMES.length - 1; i >= 0 && !latest; i--) {
+        const rs = await getReadings(ALL_NAMES[i]);
+        if (rs.length) {
+            rs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            latest = rs[rs.length - 1];
+        }
+    }
+    if (latest) device = latest.device;
+    document.getElementById("deviceLine").textContent =
+        "Device: " + (device || "—") +
+        (latest ? "  ·  latest reading " + new Date(latest.timestamp).toLocaleString() : "");
+    document.getElementById("cards").innerHTML = METRICS.map(m => {
+        const v = latest ? latest[m.key] : undefined;
+        const val = (v === undefined || v === null) ? "--" : v;
+        const unit = m.unit ? ' <span class="card-unit">' + m.unit + '</span>' : "";
+        return '<div class="card"><div class="card-name">' + m.label + '</div>' +
+               '<div class="card-value">' + val + unit + '</div></div>';
+    }).join("");
+}
+
+function drawCharts(labels, rows, pointLabel) {
+    const wrap = document.getElementById("charts");
+    CHARTS.forEach(c => c.destroy()); CHARTS = [];
+    wrap.innerHTML = METRICS.map((m, i) =>
+        '<div class="chart-container"><div class="chart-title">' + m.label +
+        (m.unit ? " (" + m.unit + ")" : "") + '</div>' +
+        '<div class="chart-canvas-wrap"><canvas id="c' + i + '"></canvas></div></div>'
+    ).join("");
+    METRICS.forEach((m, i) => {
+        CHARTS.push(new Chart(document.getElementById("c" + i), {
+            type: "line",
+            data: { labels, datasets: [{
+                label: m.label,
+                data: rows.map(a => a[m.key] ?? null),
+                borderColor: m.color, backgroundColor: m.color + "22",
+                borderWidth: 2, tension: 0, spanGaps: true,
+                pointRadius: 4, pointHoverRadius: 6,
+            }]},
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: ctx => {
+                        const v = ctx.parsed.y;
+                        return (v === null ? "—" : v.toFixed(2)) + (m.unit ? " " + m.unit : "");
+                    } } }
+                },
+                scales: {
+                    x: { ticks: { maxTicksLimit: 8, autoSkip: true, maxRotation: 0 } },
+                    y: { beginAtZero: false }
+                }
+            }
+        }));
+    });
+}
+
+async function load() {
+    const status = document.getElementById("status");
+    status.className = ""; status.textContent = "Loading…";
+    try {
+        if (!ALL_NAMES.length) ALL_NAMES = await listFiles();
+    } catch (e) { return showEmpty(e.message); }
+    if (!ALL_NAMES.length) return showEmpty("No .json files found in the data folder.");
+
+    await updateCards();
+
+    let series, note;
+    if (VIEW === "recent") {
+        const n = +document.getElementById("count").value;
+        series = await buildRecent(n);
+        note = series.rows.length + " points · " + series.count + " files (per-file averages)";
+    } else {
+        const d = +document.getElementById("days").value;
+        series = await buildDaily(d);
+        note = series.rows.length + " days · " + series.totalReadings + " readings from " + series.count + " files";
+    }
+    if (!series.rows.length) return showEmpty("Files were found but no readings could be parsed.");
+
+    drawCharts(series.labels, series.rows);
+    status.textContent = note + " · updated " + new Date().toLocaleTimeString();
+}
+
+function showEmpty(msg) {
+    document.getElementById("cards").innerHTML = "";
+    document.getElementById("charts").innerHTML =
+        '<div class="empty"><strong>Nothing to show.</strong><br>' + msg +
+        '<br><br>On GitHub Pages, listing needs either the repo details ' +
+        '(<code>GH.owner</code> / <code>GH.repo</code> near the top of this file) ' +
+        'or an <code>index.json</code> in the data folder.</div>';
+    const status = document.getElementById("status");
+    status.className = "error"; status.textContent = "No data";
+}
+
+// ==================== WIRING ===========================================
+document.querySelectorAll("#viewSeg button").forEach(b =>
+    b.addEventListener("click", () => {
+        VIEW = b.dataset.view;
+        document.querySelectorAll("#viewSeg button").forEach(x => x.classList.toggle("active", x === b));
+        document.getElementById("recentCtl").style.display = VIEW === "recent" ? "" : "none";
+        document.getElementById("dailyCtl").style.display  = VIEW === "daily"  ? "" : "none";
+        load();
+    })
+);
+document.getElementById("count").addEventListener("change", load);
+document.getElementById("days").addEventListener("change", load);
+document.getElementById("refresh").addEventListener("click", () => { CACHE.clear(); ALL_NAMES = []; load(); });
+
+load();
+setInterval(() => { CACHE.clear(); ALL_NAMES = []; load(); }, REFRESH_MS);
 </script>
-
 </body>
 </html>
