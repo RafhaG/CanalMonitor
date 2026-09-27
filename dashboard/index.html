@@ -1,1 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+    <title>ESP32 Sensor Monitor</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f6f8;
+            margin: 0;
+            padding: 30px;
+            color: #222;
+        }
+
+        h1 {
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .card-name {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .card-value {
+            font-size: 28px;
+            font-weight: bold;
+            margin-top: 8px;
+        }
+
+        .chart-container {
+            background: white;
+            padding: 20px;
+            margin-bottom: 25px;
+            border-radius: 10px;
+            height: 350px;
+        }
+    </style>
+</head>
+
+<body>
+
+<h1>ESP32 Sensor Monitor</h1>
+
+<div class="subtitle">
+    Device: ESP32-01
+</div>
+
+<div class="cards">
+
+    <div class="card">
+        <div class="card-name">pH</div>
+        <div class="card-value" id="ph">--</div>
+    </div>
+
+    <div class="card">
+        <div class="card-name">H₂S</div>
+        <div class="card-value" id="h2s">--</div>
+    </div>
+
+    <div class="card">
+        <div class="card-name">Methane</div>
+        <div class="card-value" id="methane">--</div>
+    </div>
+
+    <div class="card">
+        <div class="card-name">Temperature</div>
+        <div class="card-value" id="temperature">--</div>
+    </div>
+
+    <div class="card">
+        <div class="card-name">Humidity</div>
+        <div class="card-value" id="humidity">--</div>
+    </div>
+
+    <div class="card">
+        <div class="card-name">CO₂</div>
+        <div class="card-value" id="co2">--</div>
+    </div>
+
+    <div class="card">
+        <div class="card-name">Dissolved Oxygen</div>
+        <div class="card-value" id="oxygen">--</div>
+    </div>
+
+</div>
+
+<div class="chart-container">
+    <canvas id="sensorChart"></canvas>
+</div>
+
+<script>
+
+async function loadData() {
+
+    const response = await fetch(
+        "../data/2026-09-27.json"
+    );
+
+    const data = await response.json();
+
+    const readings = data.readings;
+
+    // Latest reading
+    const latest = readings[readings.length - 1];
+
+    document.getElementById("ph").textContent =
+        latest.ph;
+
+    document.getElementById("h2s").textContent =
+        latest.h2s_ppm + " ppm";
+
+    document.getElementById("methane").textContent =
+        latest.methane_ppm + " ppm";
+
+    document.getElementById("temperature").textContent =
+        latest.temperature_c + " °C";
+
+    document.getElementById("humidity").textContent =
+        latest.humidity_percent + " %";
+
+    document.getElementById("co2").textContent =
+        latest.co2_ppm + " ppm";
+
+    document.getElementById("oxygen").textContent =
+        latest.dissolved_oxygen_mg_l + " mg/L";
+
+
+    // Chart labels
+    const labels = readings.map(
+        reading => new Date(reading.timestamp)
+            .toLocaleTimeString()
+    );
+
+
+    // Temperature chart
+    new Chart(
+        document.getElementById("sensorChart"),
+        {
+            type: "line",
+
+            data: {
+                labels: labels,
+
+                datasets: [
+                    {
+                        label: "Temperature °C",
+
+                        data: readings.map(
+                            reading => reading.temperature_c
+                        ),
+
+                        borderWidth: 2,
+
+                        tension: 0.3
+                    }
+                ]
+            },
+
+            options: {
+                responsive: true,
+
+                maintainAspectRatio: false,
+
+                scales: {
+                    y: {
+                        beginAtZero: false
+                    }
+                }
+            }
+        }
+    );
+}
+
+loadData();
+
+</script>
+
+</body>
+</html>
