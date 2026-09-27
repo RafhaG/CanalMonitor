@@ -1,5 +1,7 @@
-# CanalMonitor
-![Uploading image_4d113d40.jpg…]()
+# Sulphide Shadows: Canal Monitoring Project
+
+## Project Logo
+![Sulphide Shadows Logo](logo.png)
 
 
 configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
