@@ -44,7 +44,7 @@
 <body>
 
 <div class="logo-container">
-    <img src="logo.jpg" alt="Canal Monitor Logo" onerror="this.style.display='none'">
+    <img src="logo.jpg" alt="Sulphide Shadows Logo" onerror="this.style.display='none'">
 </div>
 
 <h1>ESP32 Sensor Monitor</h1>
@@ -83,43 +83,46 @@
 
 <script>
 // ============================ CONFIG ====================================
-// Folder relative to this html page
-const REL_DIR = "data/";
+// The folder of JSON files, RELATIVE TO THIS PAGE (used to fetch file bodies).
+const REL_DIR = "../data/";
 
-// GitHub repo settings (Pre-configured for your repository)
+// GitHub repo details, used ONLY to list filenames (GitHub Pages can't list a
+// folder by itself). Leave owner/repo blank to auto-detect from the page URL;
+// fill them in if the guess is wrong. Public repo => no token needed.
 const GH = {
-    owner: "RafhaG",
-    repo: "CanalMonitor",
-    branch: "main",
-    dataPath: "data",
+    owner: "",          // e.g. "mattgaber"      ("" = auto-detect)
+    repo: "",           // e.g. "sulphide-shadows" ("" = auto-detect)
+    branch: "main",     // branch your data lives on
+    dataPath: "data",   // path to the data folder INSIDE the repo (repo-root relative)
 };
 
 const REFRESH_MS = 5 * 60 * 1000;   // auto-refresh every 5 min
-const MAX_FILES  = 600;             // safety cap
+const MAX_FILES  = 600;             // safety cap on how many files to fetch at once
 
-// Metric definitions matching your ESP32 JSON schema exactly:
+// Metric definitions: JSON key, label, unit, colour.
 const METRICS = [
-    { key:"ph",                  label:"pH",               unit:"",    color:"#6366f1" },
-    { key:"ph_raw_v",            label:"pH Raw",           unit:"V",   color:"#8b5cf6" },
-    { key:"h2s_v",               label:"H₂S Signal",       unit:"V",   color:"#f59e0b" },
-    { key:"nh3_v",               label:"NH₃ Signal",       unit:"V",   color:"#10b981" },
-    { key:"methane_v",           label:"Methane Signal",   unit:"V",   color:"#ef4444" },
-    { key:"probe_temperature_c", label:"Water Probe Temp", unit:"°C",  color:"#3b82f6" }
+    { key:"ph",                    label:"pH",               unit:"",     color:"#6366f1" },
+    { key:"ph_raw_v",               label:"ph voltage",              unit:"V",  color:"#f59e0b" },
+    { key:"h2s_v",           label:"H2S",          unit:"V",  color:"#ef4444" },
+    { key:"nh3_v",         label:"NH3",      unit:"V",   color:"#f97316" },
+    { key:"methane_v",      label:"Methance",         unit:"V",    color:"#0ea5e9" },
+    { key:"probe_temperature_c",               label:"temp",              unit:"c",  color:"#10b981" }
 ];
 
 // ============================ STATE =====================================
-let ALL_NAMES = [];                 
-const CACHE = new Map();            
-let CHARTS = [];                    
-let VIEW = "recent";                
+let ALL_NAMES = [];                 // every .json filename, sorted chronologically
+const CACHE = new Map();            // filename -> normalized readings[] (avoids refetch)
+let CHARTS = [];                    // live Chart.js instances
+let VIEW = "recent";                // "recent" | "daily"
 
-// ==================== FILE DISCOVERY ===================
+// ==================== FILE DISCOVERY (list filenames) ===================
 function resolveRepo() {
     let { owner, repo, branch, dataPath } = GH;
-    const host = location.hostname;               
+    const host = location.hostname;               // e.g. mattgaber.github.io
     const segs = location.pathname.split("/").filter(Boolean);
     if (!owner && host.endsWith(".github.io")) owner = host.split(".")[0];
     if (!repo) {
+        // Project page => /{repo}/...  ; user page => repo is "{owner}.github.io"
         repo = (host.endsWith(".github.io") && segs.length) ? segs[0]
              : (owner ? owner + ".github.io" : "");
     }
@@ -129,6 +132,7 @@ function resolveRepo() {
 async function listFiles() {
     const { owner, repo, branch, dataPath } = resolveRepo();
 
+    // 1) GitHub Contents API (works for public repos, no auth)
     if (owner && repo) {
         try {
             const url = `https://api.github.com/repos/${owner}/${repo}/contents/${dataPath}?ref=${branch}`;
@@ -142,7 +146,7 @@ async function listFiles() {
         } catch (e) { console.warn("GitHub API list failed:", e.message); }
     }
 
-    // Fallback if index.json exists
+    // 2) Manifest fallback: ../data/index.json = ["a.json", ...] or {files:[...]}
     try {
         const r = await fetch(REL_DIR + "index.json", { cache: "no-store" });
         if (r.ok) {
@@ -152,7 +156,7 @@ async function listFiles() {
         }
     } catch (e) { /* ignore */ }
 
-    throw new Error("Could not list data files via GitHub API. Check repository name and permissions.");
+    throw new Error("Couldn't list the data folder via the GitHub API. Set GH.owner / GH.repo in the file, or add an index.json.");
 }
 
 function basename(p) {
@@ -161,21 +165,20 @@ function basename(p) {
     const parts = p.split("/").filter(Boolean);
     return parts.length ? parts[parts.length - 1] : p;
 }
-
 function cleanNames(list) {
     return list.map(basename)
         .filter(n => n.toLowerCase().endsWith(".json") && n.toLowerCase() !== "index.json")
         .filter((n, i, a) => a.indexOf(n) === i)
-        .sort();                                  
+        .sort();                                  // ISO-date names sort chronologically
 }
 
-// ==================== FETCH & NORMALIZE ========================
+// ==================== FETCH + NORMALISE ONE FILE ========================
+// Handles both shapes: { readings:[...] } (test) and { timestamp, ... } (esp32).
 function normalize(obj) {
     if (obj && Array.isArray(obj.readings)) return obj.readings;
     if (obj && obj.timestamp) return [obj];
     return [];
 }
-
 async function getReadings(name) {
     if (CACHE.has(name)) return CACHE.get(name);
     let readings = [];
@@ -192,7 +195,6 @@ function mean(nums) {
     const v = nums.filter(n => typeof n === "number" && !isNaN(n));
     return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
 }
-
 function avgReadings(readings) {
     const out = {};
     for (const m of METRICS) out[m.key] = mean(readings.map(r => r[m.key]));
@@ -200,18 +202,17 @@ function avgReadings(readings) {
     out._t = ts.length ? new Date(ts.reduce((a, b) => a + b, 0) / ts.length) : null;
     return out;
 }
-
 function localDayKey(ts) {
     const d = new Date(ts);
     return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
-
 function fileDate(name) {
     const m = name.match(/^(\d{4})-(\d{2})-(\d{2})/);
     return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
 }
 
-// ==================== BUILD SERIES =============================
+// ==================== BUILD SERIES PER VIEW =============================
+// Recent: last N files -> ONE averaged point per file.
 async function buildRecent(n) {
     const names = ALL_NAMES.slice(-Math.min(n, MAX_FILES));
     const rows = [];
@@ -226,8 +227,10 @@ async function buildRecent(n) {
     return { labels, rows, count: names.length };
 }
 
+// Daily: all files within the window -> group every reading by LOCAL day -> average.
 async function buildDaily(days) {
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days);
+    // Prefilter by filename date (+1 day margin for UTC/local drift); keep undated files.
     const margin = new Date(cutoff); margin.setDate(margin.getDate() - 1);
     let names = ALL_NAMES.filter(name => { const d = fileDate(name); return !d || d >= margin; });
     if (names.length > MAX_FILES) names = names.slice(-MAX_FILES);
@@ -237,7 +240,7 @@ async function buildDaily(days) {
 
     const byDay = {};
     for (const r of all) { const k = localDayKey(r.timestamp); (byDay[k] = byDay[k] || []).push(r); }
-    const keys = Object.keys(byDay).sort().slice(-days);   
+    const keys = Object.keys(byDay).sort().slice(-days);   // last `days` local days present
     const rows = keys.map(k => { const a = avgReadings(byDay[k]); a._day = k; a._nDay = byDay[k].length; return a; });
     const labels = keys.map(k => { const [y,mo,d] = k.split("-"); return mo + "-" + d; });
     return { labels, rows, count: names.length, totalReadings: all.length };
@@ -245,6 +248,7 @@ async function buildDaily(days) {
 
 // ==================== RENDER ============================================
 async function updateCards() {
+    // Latest RAW reading = newest reading from the most recent file (a live snapshot).
     let latest = null, device = null;
     for (let i = ALL_NAMES.length - 1; i >= 0 && !latest; i--) {
         const rs = await getReadings(ALL_NAMES[i]);
@@ -257,26 +261,23 @@ async function updateCards() {
     document.getElementById("deviceLine").textContent =
         "Device: " + (device || "—") +
         (latest ? "  ·  latest reading " + new Date(latest.timestamp).toLocaleString() : "");
-    
     document.getElementById("cards").innerHTML = METRICS.map(m => {
         const v = latest ? latest[m.key] : undefined;
-        const val = (v === undefined || v === null) ? "--" : (typeof v === "number" ? v.toFixed(2) : v);
+        const val = (v === undefined || v === null) ? "--" : v;
         const unit = m.unit ? ' <span class="card-unit">' + m.unit + '</span>' : "";
         return '<div class="card"><div class="card-name">' + m.label + '</div>' +
                '<div class="card-value">' + val + unit + '</div></div>';
     }).join("");
 }
 
-function drawCharts(labels, rows) {
+function drawCharts(labels, rows, pointLabel) {
     const wrap = document.getElementById("charts");
     CHARTS.forEach(c => c.destroy()); CHARTS = [];
-    
     wrap.innerHTML = METRICS.map((m, i) =>
         '<div class="chart-container"><div class="chart-title">' + m.label +
         (m.unit ? " (" + m.unit + ")" : "") + '</div>' +
         '<div class="chart-canvas-wrap"><canvas id="c' + i + '"></canvas></div></div>'
     ).join("");
-
     METRICS.forEach((m, i) => {
         CHARTS.push(new Chart(document.getElementById("c" + i), {
             type: "line",
@@ -293,7 +294,7 @@ function drawCharts(labels, rows) {
                     legend: { display: false },
                     tooltip: { callbacks: { label: ctx => {
                         const v = ctx.parsed.y;
-                        return (v === null ? "—" : v.toFixed(3)) + (m.unit ? " " + m.unit : "");
+                        return (v === null ? "—" : v.toFixed(2)) + (m.unit ? " " + m.unit : "");
                     } } }
                 },
                 scales: {
@@ -334,12 +335,15 @@ async function load() {
 function showEmpty(msg) {
     document.getElementById("cards").innerHTML = "";
     document.getElementById("charts").innerHTML =
-        '<div class="empty"><strong>Nothing to show.</strong><br>' + msg + '</div>';
+        '<div class="empty"><strong>Nothing to show.</strong><br>' + msg +
+        '<br><br>On GitHub Pages, listing needs either the repo details ' +
+        '(<code>GH.owner</code> / <code>GH.repo</code> near the top of this file) ' +
+        'or an <code>index.json</code> in the data folder.</div>';
     const status = document.getElementById("status");
     status.className = "error"; status.textContent = "No data";
 }
 
-// ==================== EVENT LISTENERS ===========================================
+// ==================== WIRING ===========================================
 document.querySelectorAll("#viewSeg button").forEach(b =>
     b.addEventListener("click", () => {
         VIEW = b.dataset.view;
